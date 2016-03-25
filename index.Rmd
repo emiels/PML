@@ -1,30 +1,98 @@
 ---
 title: "PML Course Project"
 author: "Emiel Schoenmakers"
-date: "20 maart 2016"
+date: "March 24th, 2016"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+## Summary
+Personal tracking devices generate data about daily movement patterns. The amount of movement is not an indicator how effective an exercise is executed. In the experiment data is collected on six persons to see how well (measured in five classes, 1 correctly and 4 different incorrect) they executed a particular exercise with a dumbbell. 
+
+## Data 
+The data for this assignment originates from (http://groupware.les.inf.puc-rio.br/har), thanks!
+
+### Load Data
+```{r 'Setup', message=FALSE, warning=FALSE, include=FALSE, results='hide'}
+library(caret)
+library(randomForest)
 ```
 
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+```{r 'Setup and Load', echo=TRUE, message=FALSE, warning=FALSE}
+urlTest <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+urlTrain<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+trainObs <- read.csv(urlTrain, na.strings = c("#DIV/0!","NA",""))
+validObs <- read.csv(urlTest,na.strings = c("#DIV/0!","NA",""))
+str(trainObs[,1:25]) # only first 25 comlumns shown
 ```
 
-## Including Plots
+### Explore and Preproces Data
+A brief look learns that the data contains a number of NA's and an interesting 'new_window' column. Looking at the provided information [study para 5.1](http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf)
 
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+First we drop the new_window = yes; these lines contain aggregates. Next we identify and remove near zero values (columns). Third, columns 1-6 contain no observations (but metadata), not used in model. Finally we remove columns with a correlation > 0.9
+This results in a data set for model development and testing; the imported 'test' set is used for validation (the quiz) only.
+```{r 'Preproces'}
+trainObs <- subset(trainObs, new_window == "no") #drops 406
+#detect near zero values
+nzvTrain <- nearZeroVar(trainObs, saveMetrics = FALSE)
+trainObs <- trainObs[,-nzvTrain] # drop nzv from training
+myValid <- validObs[,-nzvTrain] # drop nzv from validObs, to keep eval and training similar
+#remove first six columns (none observations to be used for prediction)
+trainObs <- trainObs[7:59]
+myValid <- myValid[7:59]
+#remove high Correlated columns (cutoff default = 0.90)
+dfCorr <- cor(subset(trainObs, select = - classe))
+highCorr <- findCorrelation(dfCorr)
+trainObs <- trainObs[,-highCorr]
+myValid <- myValid[,-highCorr]
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+### Prepare datasets
+For the cross validation I split the data set (trainObs) 60/40 in a training ans a test set
+
+```{r 'prepare dataset'}
+set.seed(53124)
+inTrain <- createDataPartition(y=trainObs$classe, p=0.6,list = FALSE)
+myTrain <- trainObs[inTrain,]
+myTest <- trainObs[-inTrain,]
+```
+
+## Machine Learning Model selection
+Using the training set I tried to predict the test set using two models: random forest and tree. I gave up the attempt to use different models (eg LDA and GLM) because of the huge running times. RF completed in about three minutes on my PC, both LDA and GLM ran for more than an hour before I broke off the calculations.
+
+```{r 'two models'}
+modRF <- randomForest(classe~., data = myTrain)
+modTree <- train(classe~., data = myTrain, method = "rpart")
+modRF
+modTree
+```
+## Accuracy Final Model
+Using both models we compare the predicted class (outXX) with the actual classe using the confusionmatrix function. 
+```{r 'Accuracy'}
+outRF <- predict(modRF, newdata = myTest)
+outTree <- predict(modTree, newdata = myTest)
+confusionMatrix(outRF, myTest$classe)$overall['Accuracy']
+confusionMatrix(outTree, myTest$classe)$overall['Accuracy']
+```
+Comparing both Accuracies, the Random Forest is the better of the two and gives a quite high accuracy (>>95%)
+
+Exploring this model further we look at the complete confusion matrix and look at which variables are most important for the prediction
+
+```{r 'Lookin into Final Model'}
+confusionMatrix(outRF, myTest$classe)
+varImpPlot(modRF)
+```
+
+
+## Results for Validation Set - the Quiz..
+Finally we look at the provided validation data (pml-testing).
+This is also the data used in the quiz for the assignment
+
+```{r 'Validation results'}
+outValid <- predict(modRF, newdata = myValid)
+outValid
+```
+
+
+
+
+
